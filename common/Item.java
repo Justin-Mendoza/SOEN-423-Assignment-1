@@ -172,4 +172,20 @@ public class Item implements Serializable {
         return itemQuantity - reservedUnits;
     }
 
+    // cehck available units except self
+    public int getAvilableUnitsExcluding(String reservationID, LocalDateTime start, LocalDateTime end) {
+        int overlappingReservations = 0;
+
+        for (Reservation reservation : reservations) {
+
+            if (reservationID.equals(reservation.getReservationID())) {
+                continue;
+            }
+            if (reservation.overlaps(start, end)) {
+                overlappingReservations++;
+            }
+        }
+
+        return itemQuantity - overlappingReservations;
+    }
 }

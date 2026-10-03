@@ -37,4 +37,16 @@ public interface CampusService extends Remote {
         // to reserve itm under other campus
         String reserveLocalItem(String userID, String itemID, LocalDateTime startDateTime, LocalDateTime endDateTime)
                         throws RemoteException;
+
+        String cancelLocalReservation(String userID, String reservationID, String itemID) throws RemoteException;
+
+        String approveWaitingRequest(String userID, String itemID, String reservationID, LocalDateTime startTime,
+                        LocalDateTime endTime) throws RemoteException;
+
+        String updateReservetion(String userID, String itemID, String reservationID, LocalDateTime startTime,
+                        LocalDateTime endTime) throws RemoteException;
+
+        public String updateLocalReservation(String userID, String reservationID, String itemID,
+                        LocalDateTime newStartDateTime, LocalDateTime newEndDateTime) throws RemoteException;
+
 }

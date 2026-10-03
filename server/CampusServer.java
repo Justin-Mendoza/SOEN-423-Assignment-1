@@ -3,13 +3,16 @@ package server;
 import common.Item;
 import remote.CampusService;
 import common.Reservation;
+import common.WaitingRequest;
 
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.ArrayList;
 
 import java.time.LocalDateTime;
@@ -43,6 +46,245 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     }
 
     @Override
+    public synchronized String updateReservation(String userID, String reservationID, LocalDateTime newStart,
+            LocalDateTime newEnd) throws RemoteException {
+
+        if (!isValidUser(userID)) {
+            return "FAILURE: Invalid user ID.";
+        }
+
+        if (newStart == null || newEnd == null) {
+            return "FAILURE: Invalid date/time.";
+        }
+
+        if (!newStart.isBefore(newEnd)) {
+            return "FAILURE: Start time must be before end time.";
+        }
+
+        if (newStart.isBefore(now())) {
+            return "FAILURE: Start time cannot be in the past.";
+        }
+
+        Reservation reservation = findUserReservation(userID, reservationID);
+
+        if (reservation == null) {
+            return "FAILURE: Reservation not found";
+        }
+
+        String itemID = reservation.getItemID();
+
+        if (!isCrossCampusReservationUpdateAllowed(userID, itemID, newStart, newEnd, reservationID)) {
+            return "FAILURE: CROSS CAMPUS LIMIT EXCEEDED";
+        }
+
+        if (!isWithinWeeklyBudgetForUpdate(
+                userID,
+                newStart,
+                newEnd,
+                reservationID)) {
+
+            return "FAILURE: Weekly budget exceeded.";
+        }
+
+        String targetCampus = itemID.substring(0, 3);
+        String result;
+
+        if (targetCampus.equals(campus)) {
+            result = updateLocalReservation(userID,
+                    reservationID,
+                    itemID,
+                    newStart,
+                    newEnd);
+
+        } else {
+
+            CampusService targetServer = getCampusServer(targetCampus);
+
+            if (targetServer == null) {
+                return "FAILURE: Target campus unavailable.";
+            }
+
+            result = targetServer.updateLocalReservation(
+                    userID,
+                    reservationID,
+                    itemID,
+                    newStart,
+                    newEnd);
+        }
+
+        // Only change home-server copy if target update succeeded
+        if (result.startsWith("SUCCESS")) {
+            reservation.updateTime(
+                    newStart,
+                    newEnd);
+        }
+
+        return result;
+    }
+
+    @Override
+    public synchronized String updateLocalReservation(String userID,
+            String reservationID,
+            String itemID,
+            LocalDateTime newStartDateTime,
+            LocalDateTime newEndDateTime) throws RemoteException {
+        Item item = items.get(itemID);
+
+        if (item == null) {
+            return "FAILURE: Item not found.";
+        }
+
+        Reservation reservation = item.getReservation(reservationID);
+
+        if (reservation == null) {
+            return "FAILURE: Reservation not found.";
+        }
+
+        if (!reservation.getUserID().equals(userID)) {
+            return "FAILURE: Reservation does not belong to user.";
+        }
+
+        if (item.getAvilableUnitsExcluding(
+                reservationID,
+                newStartDateTime,
+                newEndDateTime) <= 0) {
+
+            return "FAILURE: Item unavailable for new interval.";
+        }
+
+        reservation.updateTime(
+                newStartDateTime,
+                newEndDateTime);
+
+        return "SUCCESS: Reservation updated.";
+    }
+
+    // FIFO
+    private void processWaitingQueue(Item item) throws RemoteException {
+        Iterator<WaitingRequest> iterator = item.getWaitingQueue().iterator();
+
+        while (iterator.hasNext()) {
+            WaitingRequest request = iterator.next();
+            // expired
+            if (request.getStartDateTime().isBefore(now())) {
+                iterator.remove();
+            }
+
+            // check availability
+            if (item.getAvailableUnits(request.getStartDateTime(), request.getEndDateTime()) <= 0) {
+                continue;
+            }
+            String userID = request.getUserID();
+            String homeCampus = userID.substring(0, 3);
+
+            String reservationID = homeCampus + "-R-" + UUID.randomUUID();
+            String result;
+
+            if (homeCampus.equals(campus)) {
+                result = approveWaitingRequest(userID, userID, reservationID, request.getStartDateTime(),
+                        request.getEndDateTime());
+
+            } else {
+                // getting user home server
+                CampusService homeServer = getCampusServer(homeCampus);
+                if (homeServer == null) {
+                    continue;
+                }
+
+                result = homeServer.approveWaitingRequest(userID, userID, reservationID, request.getStartDateTime(),
+                        request.getEndDateTime());
+
+            }
+            // within budget adn cross capus approved
+            if (result.startsWith("SUCCESS")) {
+                Reservation reservation = new Reservation(reservationID, userID, result, request.getStartDateTime(),
+                        request.getEndDateTime());
+                item.addReservation(reservation);
+                iterator.remove();
+            }
+
+        }
+
+    }
+
+    @Override
+    public synchronized String approveWaitingRequest(String userID, String itemID, String reservationID,
+            LocalDateTime start,
+            LocalDateTime end) {
+        if (!isCrossCampusReservationAllowed(userID, itemID, start, end)) {
+            return "FAILURE: CROSS CAMPUS LIMIT REACHED";
+        }
+        if (!isWithinWeeklyBudget(userID, start, end)) {
+            return "FAILURE: NOT WITHIN WEEKLY BUDGET";
+        }
+
+        Reservation reservation = new Reservation(reservationID, userID, itemID, start, end);
+
+        userReservations.computeIfAbsent(userID, key -> new ArrayList<>()).add(reservation);
+
+        return "SUCCESS";
+    }
+
+    @Override
+    public synchronized String cancelReservation(String userID, String ReservationID) throws RemoteException {
+        if (!isValidUser(userID)) {
+            return "FAILURE: User is not a valid user";
+        }
+        Reservation reservation = findUserReservation((userID), ReservationID);
+
+        if (reservation == null) {
+            return "FAILURE: reservation not found";
+        }
+        String item = reservation.getItemID();
+        String targetCampus = item.substring(0, 3);
+        String result;
+
+        if (targetCampus.equals(campus)) {
+            result = cancelLocalReservation(userID, ReservationID, item);
+        } else {
+            // reservation does not belong to this campus
+            CampusService targetServer = getCampusServer(targetCampus);
+
+            if (targetServer == null) {
+                return "FAILURE: Target Campus not found";
+            }
+
+            result = targetServer.cancelLocalReservation(userID, ReservationID, item);
+
+        }
+        if (result.startsWith("SUCCESS")) {
+            userReservations.get(userID).remove(reservation);
+        }
+
+        return result;
+
+    }
+
+    @Override
+    public synchronized String cancelLocalReservation(String userID, String reservationID, String itemID)
+            throws RemoteException {
+        Item item = items.get(itemID);
+        if (item == null) {
+            return "FAILURE: ITEM NOT FOUND";
+        }
+
+        Reservation reservation = item.getReservation(reservationID);
+
+        if (reservation == null) {
+            return "FAILURE: RESERVATION NOT FOUND";
+        }
+
+        if (!reservation.getUserID().equals(userID)) {
+            return "FAILURE: USER IDS DO NOT MATCH";
+        }
+
+        item.removeReservation(reservation);
+        processWaitingQueue(item);
+        return "SUCCESS: SUCCESSFULLY REMOVED RESERVATION";
+
+    }
+
+    @Override
     public synchronized String reserveItem(String userId, String itemID, LocalDateTime start,
             LocalDateTime end) throws RemoteException {
         // Validation
@@ -67,8 +309,25 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         if (!isWithinWeeklyBudget(userId, start, end)) {
             return "Failure: exceeds weekly budget";
         }
+
+        // CROSS CAMPUS reservation
         if (!itemID.startsWith(campus)) {
-            return "FAILURE: Cross-campus routing not implemented yet";
+            String targetCampus = campus.substring(0, 3);
+            CampusService targetServer = getCampusServer(targetCampus);
+
+            if (targetServer == null) {
+                return "Failure: Target server not found";
+            }
+
+            String result = targetServer.reserveLocalItem(userId, itemID, start, end);
+
+            if (result.startsWith("SUCCESS:")) {
+                String reservationID = result.substring("SUCCESS:".length());
+                Reservation reservation = new Reservation(reservationID, userId, itemID, start, end);
+                userReservations.computeIfAbsent(userId, key -> new ArrayList<>()).add(reservation);
+            }
+
+            return result;
 
         }
         Item item = items.get(itemID);
@@ -90,7 +349,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         // add reservaiton to the user
         userReservations.computeIfAbsent(userId, key -> new ArrayList<>()).add(reservation);
 
-        return "Success: Reservations saved under " + reservationID;
+        return "SUCCESS: Reservations saved under " + reservationID;
     }
 
     // ADDITEM BUT ALSO UDPATE FOR GIVEN SERVER
@@ -119,7 +378,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         if (item == null) {
             item = new Item(itemID, itemType, itemName, itemQuantity);
             items.put(itemID, item);
-            return "Success: Item added.";
+            return "SUCCESS: Item added.";
         }
 
         if (!item.canSetQuantity(itemQuantity)) {
@@ -300,6 +559,103 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    @Override
+    public synchronized String reserveLocalItem(String userID, String itemID, LocalDateTime start, LocalDateTime end)
+            throws RemoteException {
+        if (!itemID.startsWith(campus)) {
+            return "Failure: item does not belong to campus";
+        }
+        Item item = items.get(itemID);
+
+        if (item == null) {
+            return "Failure: Item does Not Exist";
+        }
+
+        if (item.getAvailableUnits(start, end) <= 0) {
+            return "Failrue: Not enough items, cannot reserve";
+        }
+        String reservationID = campus + "-R-" + UUID.randomUUID();
+
+        Reservation reservation = new Reservation(reservationID, userID, itemID, start, end);
+
+        item.addReservation(reservation);
+
+        return "SUCCESS: " + reservationID;
+    }
+
+    private Reservation findUserReservation(String userID, String reservationID) {
+        List<Reservation> reservations = userReservations.get(userID);
+
+        if (reservations == null) {
+            return null;
+        }
+
+        for (Reservation reservation : reservations) {
+            if (reservationID.equals(reservation.getReservationID())) {
+                return reservation;
+
+            }
+        }
+        return null;
+    }
+
+    private boolean isCrossCampusReservationUpdateAllowed(String userID, String itemID, LocalDateTime start,
+            LocalDateTime end, String reservationID) {
+
+        String homeCampus = userID.substring(0, 3);
+        String targetCampus = itemID.substring(0, 3);
+
+        if (homeCampus.equals(targetCampus)) {
+            return true;
+        }
+
+        List<Reservation> reservations = userReservations.get(userID);
+
+        if (reservations == null) {
+            return true;
+        }
+
+        for (Reservation reservation : reservations) {
+            if (reservation.getReservationID().equals(reservationID)) {
+                continue;
+            }
+            String reservationCampus = reservation.getReservationID().substring(0, 3);
+            if (reservationCampus.equals(targetCampus) && reservation.overlaps(start, end)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isWithinWeeklyBudgetForUpdate(String userID, LocalDateTime start, LocalDateTime end,
+            String reservationID) {
+        Map<LocalDateTime, Double> requestedHours = getHoursByWeek(start, end);
+        Map<LocalDateTime, Double> usedHours = new HashMap<>();
+
+        List<Reservation> reservations = userReservations.get(userID);
+
+        if (reservations != null) {
+            for (Reservation reservation : reservations) {
+                if (reservation.getReservationID().equals(reservationID)) {
+                    continue;
+                }
+                Map<LocalDateTime, Double> reservationHours = getHoursByWeek(reservation.getStartDateTime(),
+                        reservation.getEndDateTime());
+
+                for (LocalDateTime week : reservationHours.keySet()) {
+                    usedHours.put(week, usedHours.getOrDefault(week, 0.0) + reservationHours.get(week));
+                }
+            }
+        }
+        for (LocalDateTime week : requestedHours.keySet()) {
+            double total = usedHours.getOrDefault(week, 0.0) + requestedHours.get(week);
+            if (total > 20.0) {
+                return false;
+            }
+        }
+        return true;
     }
 
 }
