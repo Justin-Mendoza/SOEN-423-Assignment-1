@@ -23,10 +23,16 @@ import java.time.temporal.TemporalAdjuster;
 import java.time.temporal.TemporalAdjusters;
 import javax.swing.plaf.basic.BasicListUI;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
 public class CampusServer extends UnicastRemoteObject implements CampusService {
+
     private String campus;
     private Map<String, Item> items; // mapping itemID to item objecty
     private Map<String, List<Reservation>> userReservations; // userID -> Reservations
@@ -43,6 +49,138 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         }
 
         return managerID.matches("(SGW|LOY|WIL)M\\d{4}") && managerID.startsWith(campus);
+    }
+
+    @Override
+    public synchronized String joinLocalWaitingQueue(
+            String userID,
+            String itemID,
+            LocalDateTime startDateTime,
+            LocalDateTime endDateTime
+    ) throws RemoteException {
+
+        Item item = items.get(itemID);
+
+        if (item == null) {
+            return "FAILURE: Item not found.";
+        }
+
+        if (item.getAvailableUnits(startDateTime, endDateTime) > 0) {
+            return "AVAILABLE: Item can currently be reserved.";
+        }
+
+        WaitingRequest request = new WaitingRequest(
+                userID,
+                startDateTime,
+                endDateTime
+        );
+
+        item.addToWaitingQueue(request);
+
+        return "SUCCESS: Added to waiting queue.";
+    }
+
+    @Override
+    public synchronized String joinWaitingQueue(
+            String userID,
+            String itemID,
+            LocalDateTime startDateTime,
+            LocalDateTime endDateTime
+    ) throws RemoteException {
+
+        if (!isValidUser(userID)) {
+            return "FAILURE: Invalid user ID.";
+        }
+
+        if (!isCrossCampusReservationAllowed(
+                userID, itemID, startDateTime, endDateTime)) {
+
+            return "FAILURE: Cross-campus limit exceeded.";
+        }
+
+        if (!isWithinWeeklyBudget(
+                userID, startDateTime, endDateTime)) {
+
+            return "FAILURE: Weekly budget exceeded.";
+        }
+
+        String targetCampus = itemID.substring(0, 3);
+
+        // Item belongs to this campus
+        if (targetCampus.equals(campus)) {
+            return joinLocalWaitingQueue(
+                    userID,
+                    itemID,
+                    startDateTime,
+                    endDateTime
+            );
+        }
+
+        // Item belongs to another campus
+        CampusService targetServer
+                = getCampusServer(targetCampus);
+
+        if (targetServer == null) {
+            return "FAILURE: Target campus unavailable.";
+        }
+
+        return targetServer.joinLocalWaitingQueue(
+                userID,
+                itemID,
+                startDateTime,
+                endDateTime
+        );
+    }
+
+    @Override
+    public synchronized String findItem(String userID, String itemType, LocalDateTime startDateTime, LocalDateTime endDateTime)
+            throws RemoteException {
+        if (!isValidUser(userID)) {
+            return "FAILURE: Invalid User ID";
+        }
+        if (startDateTime == null || endDateTime == null || !startDateTime.isBefore(endDateTime)) {
+            return "FAILURE: Invalid time interval.";
+        }
+
+        StringBuilder result = new StringBuilder();
+        String[] campuses = {"SGW", "LOY", "WIL"};
+
+        for (String targetCampus : campuses) {
+            if (targetCampus.equals(campus)) {
+                result.append(findLocalItem(itemType, startDateTime, endDateTime));
+            } else {
+                result.append(findFromCampusWithTimeout(targetCampus, itemType, startDateTime, endDateTime));
+            }
+        }
+        if (result.length() == 0) {
+            return "No matching items found";
+        }
+        return result.toString();
+
+    }
+
+    @Override
+    public synchronized String findLocalItem(String itemType, LocalDateTime start, LocalDateTime end) throws RemoteException {
+        StringBuilder result = new StringBuilder();
+
+        for (Item item : items.values()) {
+            if (item.getItemType().equalsIgnoreCase(itemType)) {
+                int available = item.getAvailableUnits(start, end);
+
+                result.append(item.getItemID())
+                        .append(" | ")
+                        .append(item.getItemType())
+                        .append(" | ")
+                        .append(item.getItemName())
+                        .append(" | Campus: ")
+                        .append(campus)
+                        .append(" | Available: ")
+                        .append(available)
+                        .append("\n");
+
+            }
+        }
+        return result.toString();
     }
 
     @Override
@@ -460,7 +598,6 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         String targetCampus = itemID.substring(0, 3);
 
         // Home Campus reservations have no cross campus limit
-
         if (homeCampus.equals(targetCampus)) {
             return true;
         }
@@ -656,6 +793,29 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             }
         }
         return true;
+    }
+
+    //concurrency timeout helper
+    private String findFromCampusWithTimeout(String targetCampus, String itemType, LocalDateTime start, LocalDateTime end) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<String> future = executor.submit(() -> {
+                CampusService server = getCampusServer(targetCampus);
+
+                if (server == null) {
+                    throw new RemoteException();
+                }
+                return server.findLocalItem(itemType, start, end);
+            });
+
+            return future.get(2, TimeUnit.SECONDS);
+
+        } catch (Exception e) {
+            return targetCampus + ": UNAVAILABLE\n";
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
 }
