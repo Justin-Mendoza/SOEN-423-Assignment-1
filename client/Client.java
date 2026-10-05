@@ -46,6 +46,11 @@ public class Client {
         System.out.print("Enter your ID: ");
         String id = scanner.nextLine();
 
+        if (!id.matches("(SGW|LOY|WIL)[MU]\\d{4}")) {
+            System.out.println("Invalid ID. Example: SGWU1111 or SGWM1111.");
+            return;
+        }
+
         CampusService server = connectToHomeCampus(id);
 
         if (server == null) {

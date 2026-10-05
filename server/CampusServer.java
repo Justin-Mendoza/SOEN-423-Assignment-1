@@ -57,7 +57,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     }
 
     private String logResult(String operation, String actorID, String result) {
-        Logger.log(campus, operation, actorID, result);
+        Logger.log(campus, operation, actorID, result.isEmpty() ? "SUCCESS: No matching items." : result);
         return result;
     }
 
@@ -113,7 +113,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     public String joinWaitingQueue(String userID, String itemID, LocalDateTime start, LocalDateTime end)
             throws RemoteException {
         synchronized (userLock(userID)) {
-            return joinWaitingQueueState(userID, itemID, start, end);
+            try {
+                return joinWaitingQueueState(userID, itemID, start, end);
+            } catch (RemoteException e) {
+                return logResult("joinWaitingQueue", userID, "FAILURE: " + e.getMessage());
+            }
         }
     }
 
@@ -201,6 +205,9 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
     @Override
     public synchronized String findLocalItem(String itemType, LocalDateTime start, LocalDateTime end) throws RemoteException {
+        if (start == null || end == null || !start.isBefore(end)) {
+            return logResult("findLocalItem", "SYSTEM", "FAILURE: Invalid time interval.");
+        }
         StringBuilder result = new StringBuilder();
 
         for (Item item : items.values()) {
@@ -228,7 +235,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             throws RemoteException {
         String result;
         synchronized (userLock(userID)) {
-            result = updateReservationState(userID, reservationID, start, end);
+            try {
+                result = updateReservationState(userID, reservationID, start, end);
+            } catch (RemoteException e) {
+                return logResult("updateReservation", userID, "FAILURE: " + e.getMessage());
+            }
         }
         if (result.startsWith("SUCCESS")) {
             processAllWaitingQueues();
@@ -358,6 +369,8 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 CampusService server = targetCampus.equals(campus) ? this : getCampusServer(targetCampus);
                 if (server != null) {
                     server.processWaitingQueues();
+                } else {
+                    logResult("processWaitingQueues", "SYSTEM", targetCampus + ": UNAVAILABLE");
                 }
             } catch (RemoteException e) {
                 logResult("processWaitingQueues", "SYSTEM", targetCampus + ": UNAVAILABLE");
@@ -370,7 +383,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         synchronized (this) {
             queuePassRequested = true;
             if (processingQueues) {
-                return "SUCCESS: Queue processing requested.";
+                return logResult("processWaitingQueues", "SYSTEM", "SUCCESS: Queue processing requested.");
             }
             processingQueues = true;
         }
@@ -387,7 +400,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 synchronized (this) {
                     if (!queuePassRequested) {
                         processingQueues = false;
-                        return "SUCCESS: Waiting queues processed.";
+                        return logResult("processWaitingQueues", "SYSTEM", "SUCCESS: Waiting queues processed.");
                     }
                 }
             }
@@ -446,7 +459,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 return logResult("approveWaitingRequest", userID, "FAILURE: Invalid request.");
             }
             // reserveItem checks the budget/limit, commits capacity, and records the actual item and ID.
-            return logResult("approveWaitingRequest", userID, reserveItemState(userID, itemID, start, end));
+            try {
+                return logResult("approveWaitingRequest", userID, reserveItemState(userID, itemID, start, end));
+            } catch (RemoteException e) {
+                return logResult("approveWaitingRequest", userID, "FAILURE: " + e.getMessage());
+            }
         }
     }
 
@@ -454,7 +471,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     public String cancelReservation(String userID, String reservationID) throws RemoteException {
         String result;
         synchronized (userLock(userID)) {
-            result = cancelReservationState(userID, reservationID);
+            try {
+                result = cancelReservationState(userID, reservationID);
+            } catch (RemoteException e) {
+                return logResult("cancelReservation", userID, "FAILURE: " + e.getMessage());
+            }
         }
         // Credit the user's budget before queue eligibility checks and callbacks.
         if (result.startsWith("SUCCESS")) {
@@ -524,7 +545,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     public String reserveItem(String userID, String itemID, LocalDateTime start, LocalDateTime end)
             throws RemoteException {
         synchronized (userLock(userID)) {
-            return reserveItemState(userID, itemID, start, end);
+            try {
+                return reserveItemState(userID, itemID, start, end);
+            } catch (RemoteException e) {
+                return logResult("reserveItem", userID, "FAILURE: " + e.getMessage());
+            }
         }
     }
 

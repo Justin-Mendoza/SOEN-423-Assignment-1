@@ -39,3 +39,43 @@
 2026-10-05T16:39:48.351122 | Server: SGW | Operation: findItem | Actor: SGWU1111 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
 LOY5000 | Macbook | future | Campus: LOY | Available: 3
 
+2026-10-05T17:35:18.980962 | Server: SGW | Operation: addItem | Actor: SGWM2000 | Result: SUCCESS: Item added.
+2026-10-05T17:35:21.624058 | Server: SGW | Operation: listAvailableItems | Actor: SGWM2000 | Result: SGW1001 | Macbook | pro | Available: 2
+
+2026-10-05T17:35:59.708235 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 2
+
+2026-10-05T17:35:59.727417 | Server: SGW | Operation: findItem | Actor: SGWU2000 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 2
+
+2026-10-05T17:36:20.380295 | Server: SGW | Operation: reserveItem | Actor: SGWU2000 | Result: SUCCESS: Reservations saved under SGW-R-ca247ad1-a083-43ed-9d87-65033aabd563
+2026-10-05T17:36:43.835252 | Server: SGW | Operation: reserveItem | Actor: SGWU2000 | Result: SUCCESS: Reservations saved under SGW-R-365c5ea2-5fcc-4d8d-acea-03f452a0c331
+2026-10-05T17:37:01.011470 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 0
+
+2026-10-05T17:37:01.020955 | Server: SGW | Operation: findItem | Actor: SGWU2000 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 0
+
+2026-10-05T17:37:06.799526 | Server: SGW | Operation: listAvailableItems | Actor: SGWM2000 | Result: SGW1001 | Macbook | pro | Available: 2
+
+2026-10-05T17:37:49.504724 | Server: SGW | Operation: reserveItem | Actor: SGWU2000 | Result: UNAVAILABLE: Item has insufficient units
+2026-10-05T17:37:53.216815 | Server: SGW | Operation: joinLocalWaitingQueue | Actor: SGWU2000 | Result: SUCCESS: Added to waiting queue.
+2026-10-05T17:37:53.217432 | Server: SGW | Operation: joinWaitingQueue | Actor: SGWU2000 | Result: SUCCESS: Added to waiting queue.
+2026-10-05T17:38:04.711661 | Server: SGW | Operation: cancelLocalReservation | Actor: SGWU2000 | Result: SUCCESS: SUCCESSFULLY REMOVED RESERVATION
+2026-10-05T17:38:04.712298 | Server: SGW | Operation: cancelReservation | Actor: SGWU2000 | Result: SUCCESS: SUCCESSFULLY REMOVED RESERVATION
+2026-10-05T17:38:04.714085 | Server: SGW | Operation: reserveItem | Actor: SGWU2000 | Result: SUCCESS: Reservations saved under SGW-R-46b2f589-38fe-4d3d-a980-1d65833435b2
+2026-10-05T17:38:04.714450 | Server: SGW | Operation: approveWaitingRequest | Actor: SGWU2000 | Result: SUCCESS: Reservations saved under SGW-R-46b2f589-38fe-4d3d-a980-1d65833435b2
+2026-10-05T17:38:32.889346 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 0
+
+2026-10-05T17:38:32.900176 | Server: SGW | Operation: findItem | Actor: SGWU2000 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 0
+
+2026-10-05T17:39:27.704682 | Server: SGW | Operation: addItem | Actor: SGWM2000 | Result: SUCCESS: Item updated.
+2026-10-05T17:39:44.360968 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | macbook | pro | Campus: SGW | Available: 1
+
+2026-10-05T17:39:44.372130 | Server: SGW | Operation: findItem | Actor: SGWU2000 | Result: SGW1001 | macbook | pro | Campus: SGW | Available: 1
+
+2026-10-05T17:41:24.723008 | Server: SGW | Operation: reserveLocalItem | Actor: WILU2999 | Result: SUCCESS: SGW-R-d80e3522-cb74-4bb4-9a7d-7a534d0a3e3e
+2026-10-05T17:42:08.657613 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | macbook | pro | Campus: SGW | Available: 2
+
+2026-10-05T17:42:37.902904 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: 
+2026-10-05T17:42:37.909674 | Server: SGW | Operation: findItem | Actor: SGWU2000 | Result: No matching items found
+2026-10-05T17:42:47.985448 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | macbook | pro | Campus: SGW | Available: 2
+
+2026-10-05T17:42:47.994374 | Server: SGW | Operation: findItem | Actor: SGWU2000 | Result: SGW1001 | macbook | pro | Campus: SGW | Available: 2
+

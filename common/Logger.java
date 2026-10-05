@@ -21,7 +21,7 @@ public class Logger {
                     + " | Server: " + campus
                     + " | Operation: " + operation
                     + " | Actor: " + actorID
-                    + " | Result: " + result
+                    + " | Result: " + result.replace("\r", "\\r").replace("\n", "\\n")
                     + "\n"
             );
 
