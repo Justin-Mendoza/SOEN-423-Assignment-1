@@ -10,7 +10,6 @@ import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +23,7 @@ import java.time.temporal.TemporalAdjuster;
 import java.time.temporal.TemporalAdjusters;
 import javax.swing.plaf.basic.BasicListUI;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -38,6 +38,24 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     private Map<String, Item> items; // mapping itemID to item objecty
     private Map<String, List<Reservation>> userReservations; // userID -> Reservations
 
+    // Home-campus checks use a user lock; item methods use this server's monitor.
+    // Never hold the server monitor while calling another campus.
+    private final Map<String, Object> userLocks = new ConcurrentHashMap<>();
+    private boolean processingQueues;
+    private boolean queuePassRequested;
+
+    private Object userLock(String userID) {
+        return userLocks.computeIfAbsent(String.valueOf(userID), key -> new Object());
+    }
+
+    private boolean isValidItemID(String itemID) {
+        return itemID != null && itemID.matches("(SGW|LOY|WIL).+");
+    }
+
+    private boolean isValidInterval(LocalDateTime start, LocalDateTime end) {
+        return start != null && end != null && start.isBefore(end) && !start.isBefore(now());
+    }
+
     private String logResult(String operation, String actorID, String result) {
         Logger.log(campus, operation, actorID, result);
         return result;
@@ -46,7 +64,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     public CampusServer(String campus) throws RemoteException {
         this.campus = campus;
         this.items = new HashMap<>();
-        this.userReservations = new HashMap<>();
+        this.userReservations = new ConcurrentHashMap<>();
     }
 
     private boolean isValidManager(String managerID) {
@@ -65,6 +83,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             LocalDateTime endDateTime
     ) throws RemoteException {
 
+        if (userID == null || !userID.matches("(SGW|LOY|WIL)U\\d{4}")
+                || !isValidItemID(itemID) || !itemID.startsWith(campus)
+                || !isValidInterval(startDateTime, endDateTime)) {
+            return logResult("joinLocalWaitingQueue", userID, "FAILURE: Invalid request.");
+        }
         Item item = items.get(itemID);
 
         if (item == null) {
@@ -87,7 +110,14 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     }
 
     @Override
-    public synchronized String joinWaitingQueue(
+    public String joinWaitingQueue(String userID, String itemID, LocalDateTime start, LocalDateTime end)
+            throws RemoteException {
+        synchronized (userLock(userID)) {
+            return joinWaitingQueueState(userID, itemID, start, end);
+        }
+    }
+
+    private String joinWaitingQueueState(
             String userID,
             String itemID,
             LocalDateTime startDateTime,
@@ -96,6 +126,10 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
         if (!isValidUser(userID)) {
             return logResult("joinWaitingQueue", userID, "FAILURE: Invalid user ID.");
+        }
+
+        if (!isValidItemID(itemID) || !isValidInterval(startDateTime, endDateTime)) {
+            return logResult("joinWaitingQueue", userID, "FAILURE: Invalid item ID or time interval.");
         }
 
         if (!isCrossCampusReservationAllowed(
@@ -107,7 +141,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         if (!isWithinWeeklyBudget(
                 userID, startDateTime, endDateTime)) {
 
-            return logResult("joinWaitingQueue", userID, "FAILURE: Weekly budget exceeded.");
+            return logResult("joinWaitingQueue", userID, weeklyBudgetFailure(userID, startDateTime, endDateTime, null));
         }
 
         String targetCampus = itemID.substring(0, 3);
@@ -139,7 +173,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     }
 
     @Override
-    public synchronized String findItem(String userID, String itemType, LocalDateTime startDateTime, LocalDateTime endDateTime)
+    public String findItem(String userID, String itemType, LocalDateTime startDateTime, LocalDateTime endDateTime)
             throws RemoteException {
         if (!isValidUser(userID)) {
             return logResult("findItem", userID, "FAILURE: Invalid User ID");
@@ -190,7 +224,19 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     }
 
     @Override
-    public synchronized String updateReservation(String userID, String reservationID, LocalDateTime newStart,
+    public String updateReservation(String userID, String reservationID, LocalDateTime start, LocalDateTime end)
+            throws RemoteException {
+        String result;
+        synchronized (userLock(userID)) {
+            result = updateReservationState(userID, reservationID, start, end);
+        }
+        if (result.startsWith("SUCCESS")) {
+            processAllWaitingQueues();
+        }
+        return result;
+    }
+
+    private String updateReservationState(String userID, String reservationID, LocalDateTime newStart,
             LocalDateTime newEnd) throws RemoteException {
 
         if (!isValidUser(userID)) {
@@ -227,7 +273,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 newEnd,
                 reservationID)) {
 
-            return logResult("updateReservation", userID, "FAILURE: Weekly budget exceeded.");
+            return logResult("updateReservation", userID, weeklyBudgetFailure(userID, newStart, newEnd, reservationID));
         }
 
         String targetCampus = itemID.substring(0, 3);
@@ -272,6 +318,9 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             String itemID,
             LocalDateTime newStartDateTime,
             LocalDateTime newEndDateTime) throws RemoteException {
+        if (!isValidInterval(newStartDateTime, newEndDateTime)) {
+            return logResult("updateLocalReservation", userID, "FAILURE: Invalid time interval.");
+        }
         Item item = items.get(itemID);
 
         if (item == null) {
@@ -303,74 +352,118 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         return logResult("updateLocalReservation", userID, "SUCCESS: Reservation updated.");
     }
 
-    // FIFO
-    private void processWaitingQueue(Item item) throws RemoteException {
-        Iterator<WaitingRequest> iterator = item.getWaitingQueue().iterator();
-
-        while (iterator.hasNext()) {
-            WaitingRequest request = iterator.next();
-            // expired
-            if (request.getStartDateTime().isBefore(now())) {
-                iterator.remove();
+    private void processAllWaitingQueues() {
+        for (String targetCampus : new String[]{"SGW", "LOY", "WIL"}) {
+            try {
+                CampusService server = targetCampus.equals(campus) ? this : getCampusServer(targetCampus);
+                if (server != null) {
+                    server.processWaitingQueues();
+                }
+            } catch (RemoteException e) {
+                logResult("processWaitingQueues", "SYSTEM", targetCampus + ": UNAVAILABLE");
             }
+        }
+    }
 
-            // check availability
-            if (item.getAvailableUnits(request.getStartDateTime(), request.getEndDateTime()) <= 0) {
-                continue;
+    @Override
+    public String processWaitingQueues() {
+        synchronized (this) {
+            queuePassRequested = true;
+            if (processingQueues) {
+                return "SUCCESS: Queue processing requested.";
+            }
+            processingQueues = true;
+        }
+        try {
+            while (true) {
+                List<Item> snapshot;
+                synchronized (this) {
+                    queuePassRequested = false;
+                    snapshot = new ArrayList<>(items.values());
+                }
+                for (Item item : snapshot) {
+                    processWaitingQueue(item);
+                }
+                synchronized (this) {
+                    if (!queuePassRequested) {
+                        processingQueues = false;
+                        return "SUCCESS: Waiting queues processed.";
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            synchronized (this) {
+                processingQueues = false;
+            }
+            return logResult("processWaitingQueues", "SYSTEM", "FAILURE: " + e.getMessage());
+        }
+    }
+
+    // FIFO: the home campus checks eligibility and reserves the unit under its user lock.
+    private void processWaitingQueue(Item item) {
+        List<WaitingRequest> requests;
+        synchronized (this) {
+            requests = new ArrayList<>(item.getWaitingQueue());
+        }
+        for (WaitingRequest request : requests) {
+            synchronized (this) {
+                if (items.get(item.getItemID()) != item) {
+                    return;
+                }
+                if (request.getStartDateTime().isBefore(now())) {
+                    item.getWaitingQueue().remove(request);
+                    continue;
+                }
+                if (item.getAvailableUnits(request.getStartDateTime(), request.getEndDateTime()) <= 0) {
+                    continue;
+                }
             }
             String userID = request.getUserID();
             String homeCampus = userID.substring(0, 3);
-
-            String reservationID = homeCampus + "-R-" + UUID.randomUUID();
-            String result;
-
-            if (homeCampus.equals(campus)) {
-                result = approveWaitingRequest(userID, userID, reservationID, request.getStartDateTime(),
-                        request.getEndDateTime());
-
-            } else {
-                // getting user home server
-                CampusService homeServer = getCampusServer(homeCampus);
-                if (homeServer == null) {
-                    continue;
+            CampusService homeServer = homeCampus.equals(campus) ? this : getCampusServer(homeCampus);
+            if (homeServer == null) {
+                continue;
+            }
+            try {
+                String result = homeServer.approveWaitingRequest(userID, item.getItemID(),
+                        campus + "-R-" + UUID.randomUUID(), request.getStartDateTime(), request.getEndDateTime());
+                if (result.startsWith("SUCCESS")) {
+                    synchronized (this) {
+                        item.getWaitingQueue().remove(request);
+                    }
                 }
-
-                result = homeServer.approveWaitingRequest(userID, userID, reservationID, request.getStartDateTime(),
-                        request.getEndDateTime());
-
+            } catch (RemoteException e) {
+                logResult("processWaitingQueue", userID, "FAILURE: Home campus unavailable.");
             }
-            // within budget adn cross capus approved
-            if (result.startsWith("SUCCESS")) {
-                Reservation reservation = new Reservation(reservationID, userID, result, request.getStartDateTime(),
-                        request.getEndDateTime());
-                item.addReservation(reservation);
-                iterator.remove();
-            }
-
         }
-
     }
 
     @Override
-    public synchronized String approveWaitingRequest(String userID, String itemID, String reservationID,
-            LocalDateTime start,
-            LocalDateTime end) {
-        if (!isCrossCampusReservationAllowed(userID, itemID, start, end)) {
-            return logResult("approveWaitingRequest", userID, "FAILURE: CROSS CAMPUS LIMIT REACHED");
+    public String approveWaitingRequest(String userID, String itemID, String reservationID,
+            LocalDateTime start, LocalDateTime end) throws RemoteException {
+        synchronized (userLock(userID)) {
+            if (!isValidUser(userID) || !isValidItemID(itemID) || !isValidInterval(start, end)) {
+                return logResult("approveWaitingRequest", userID, "FAILURE: Invalid request.");
+            }
+            // reserveItem checks the budget/limit, commits capacity, and records the actual item and ID.
+            return logResult("approveWaitingRequest", userID, reserveItemState(userID, itemID, start, end));
         }
-        if (!isWithinWeeklyBudget(userID, start, end)) {
-            return logResult("approveWaitingRequest", userID, "FAILURE: NOT WITHIN WEEKLY BUDGET");
-        }
-
-        Reservation reservation = new Reservation(reservationID, userID, itemID, start, end);
-
-        userReservations.computeIfAbsent(userID, key -> new ArrayList<>()).add(reservation);
-
-        return logResult("approveWaitingRequest", userID, "SUCCESS");
     }
 
     @Override
-    public synchronized String cancelReservation(String userID, String ReservationID) throws RemoteException {
+    public String cancelReservation(String userID, String reservationID) throws RemoteException {
+        String result;
+        synchronized (userLock(userID)) {
+            result = cancelReservationState(userID, reservationID);
+        }
+        // Credit the user's budget before queue eligibility checks and callbacks.
+        if (result.startsWith("SUCCESS")) {
+            processAllWaitingQueues();
+        }
+        return result;
+    }
+
+    private String cancelReservationState(String userID, String ReservationID) throws RemoteException {
         if (!isValidUser(userID)) {
             return logResult("cancelReservation", userID, "FAILURE: User is not a valid user");
         }
@@ -423,17 +516,26 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         }
 
         item.removeReservation(reservation);
-        processWaitingQueue(item);
         return logResult("cancelLocalReservation", userID, "SUCCESS: SUCCESSFULLY REMOVED RESERVATION");
 
     }
 
     @Override
-    public synchronized String reserveItem(String userId, String itemID, LocalDateTime start,
+    public String reserveItem(String userID, String itemID, LocalDateTime start, LocalDateTime end)
+            throws RemoteException {
+        synchronized (userLock(userID)) {
+            return reserveItemState(userID, itemID, start, end);
+        }
+    }
+
+    private String reserveItemState(String userId, String itemID, LocalDateTime start,
             LocalDateTime end) throws RemoteException {
         // Validation
         if (!isValidUser(userId)) {
             return logResult("reserveItem", userId, "Failure: Not a valid user");
+        }
+        if (!isValidItemID(itemID)) {
+            return logResult("reserveItem", userId, "FAILURE: Invalid item ID.");
         }
         if (start == null || end == null) {
             return logResult("reserveItem", userId, "Failure: Invalid Date Time");
@@ -451,12 +553,12 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         }
 
         if (!isWithinWeeklyBudget(userId, start, end)) {
-            return logResult("reserveItem", userId, "Failure: exceeds weekly budget");
+            return logResult("reserveItem", userId, weeklyBudgetFailure(userId, start, end, null));
         }
 
         // CROSS CAMPUS reservation
         if (!itemID.startsWith(campus)) {
-            String targetCampus = campus.substring(0, 3);
+            String targetCampus = itemID.substring(0, 3);
             CampusService targetServer = getCampusServer(targetCampus);
 
             if (targetServer == null) {
@@ -466,7 +568,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             String result = targetServer.reserveLocalItem(userId, itemID, start, end);
 
             if (result.startsWith("SUCCESS:")) {
-                String reservationID = result.substring("SUCCESS:".length());
+                String reservationID = result.substring("SUCCESS:".length()).trim();
                 Reservation reservation = new Reservation(reservationID, userId, itemID, start, end);
                 userReservations.computeIfAbsent(userId, key -> new ArrayList<>()).add(reservation);
             }
@@ -474,17 +576,22 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             return logResult("reserveItem", userId, result);
 
         }
+        return reserveHomeItem(userId, itemID, start, end);
+    }
+
+    private synchronized String reserveHomeItem(String userId, String itemID, LocalDateTime start,
+            LocalDateTime end) {
         Item item = items.get(itemID);
 
         if (item == null) {
             return logResult("reserveItem", userId, "Fail: Item not Found");
         }
         if (item.getAvailableUnits(start, end) <= 0) {
-            return logResult("reserveItem", userId, "Failure: Item has insufficient units");
+            return logResult("reserveItem", userId, "UNAVAILABLE: Item has insufficient units");
         }
 
         // passes all our checks ,we can reserve it
-        String reservationID = campus + "-R-" + System.currentTimeMillis();
+        String reservationID = campus + "-R-" + UUID.randomUUID();
 
         Reservation reservation = new Reservation(reservationID, userId, itemID, start, end);
 
@@ -498,7 +605,16 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
     // ADDITEM BUT ALSO UDPATE FOR GIVEN SERVER
     @Override
-    public synchronized String addItem(
+    public String addItem(String managerID, String itemID, String itemType, String itemName, int quantity)
+            throws RemoteException {
+        String result = addItemState(managerID, itemID, itemType, itemName, quantity);
+        if (result.startsWith("SUCCESS")) {
+            processWaitingQueues();
+        }
+        return result;
+    }
+
+    private synchronized String addItemState(
             String managerID,
             String itemID,
             String itemType,
@@ -509,8 +625,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             return logResult("addItem", managerID, "Failure: Invalid manager ID.");
         }
         // check iterm in campus
-        if (!itemID.startsWith(campus)) {
+        if (!isValidItemID(itemID) || !itemID.startsWith(campus)) {
             return logResult("addItem", managerID, "Failure: Item does not belong to mangers's campus.");
+        }
+        if (itemType == null || itemType.isBlank() || itemName == null || itemName.isBlank()) {
+            return logResult("addItem", managerID, "FAILURE: Item type and name are required.");
         }
         // check Positive Quantity
         if (itemQuantity <= 0) {
@@ -545,7 +664,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             return logResult("removeItem", managerID, "FAILURE: Invalid managerID.");
         }
 
-        if (!itemID.startsWith(campus)) {
+        if (!isValidItemID(itemID) || !itemID.startsWith(campus)) {
             return logResult("removeItem", managerID, "FAILURE: Item does not belong to manager's campus");
         }
 
@@ -660,33 +779,31 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
     }
 
-    // TODO: Remember
     private boolean isWithinWeeklyBudget(String userID, LocalDateTime start, LocalDateTime end) {
-        Map<LocalDateTime, Double> usedHours = new HashMap<>();
+        return weeklyBudgetFailure(userID, start, end, null) == null;
+    }
 
-        Map<LocalDateTime, Double> requestedHours = getHoursByWeek(start, end);
-
-        List<Reservation> reservations = userReservations.get(userID);
-
-        if (reservations != null) {
-            for (Reservation reservation : reservations) {
-                Map<LocalDateTime, Double> reservationHours = getHoursByWeek(reservation.getStartDateTime(),
-                        reservation.getEndDateTime());
-
-                for (LocalDateTime week : reservationHours.keySet()) {
-                    usedHours.put(week, usedHours.getOrDefault(week, 0.0) + reservationHours.get(week));
-                }
-
+    private String weeklyBudgetFailure(String userID, LocalDateTime start, LocalDateTime end,
+            String excludedReservationID) {
+        Map<LocalDateTime, Double> requested = new java.util.TreeMap<>(getHoursByWeek(start, end));
+        Map<LocalDateTime, Double> used = new HashMap<>();
+        for (Reservation reservation : userReservations.getOrDefault(userID, java.util.Collections.emptyList())) {
+            if (reservation.getReservationID().equals(excludedReservationID)) {
+                continue;
             }
+            getHoursByWeek(reservation.getStartDateTime(), reservation.getEndDateTime())
+                    .forEach((week, hours) -> used.merge(week, hours, Double::sum));
         }
-        for (LocalDateTime week : requestedHours.keySet()) {
-            double total = usedHours.getOrDefault(week, 0.0) + requestedHours.get(week);
-            if (total > 20) {
-                return false;
-            }
+        boolean exceeded = false;
+        StringBuilder message = new StringBuilder("FAILURE: Weekly budget exceeded.");
+        for (Map.Entry<LocalDateTime, Double> entry : requested.entrySet()) {
+            double remaining = Math.max(0, 20 - used.getOrDefault(entry.getKey(), 0.0));
+            exceeded |= entry.getValue() > remaining;
+            message.append(String.format(java.util.Locale.ROOT,
+                    " Week of %s: %.2f hours remaining; %.2f hours requested.",
+                    entry.getKey().toLocalDate(), remaining, entry.getValue()));
         }
-
-        return true;
+        return exceeded ? message.toString() : null;
     }
 
     private LocalDateTime now() {
@@ -707,6 +824,10 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     @Override
     public synchronized String reserveLocalItem(String userID, String itemID, LocalDateTime start, LocalDateTime end)
             throws RemoteException {
+        if (userID == null || !userID.matches("(SGW|LOY|WIL)U\\d{4}")
+                || !isValidItemID(itemID) || !isValidInterval(start, end)) {
+            return logResult("reserveLocalItem", userID, "FAILURE: Invalid request.");
+        }
         if (!itemID.startsWith(campus)) {
             return logResult("reserveLocalItem", userID, "Failure: item does not belong to campus");
         }
@@ -717,7 +838,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         }
 
         if (item.getAvailableUnits(start, end) <= 0) {
-            return logResult("reserveLocalItem", userID, "Failrue: Not enough items, cannot reserve");
+            return logResult("reserveLocalItem", userID, "UNAVAILABLE: Not enough items, cannot reserve");
         }
         String reservationID = campus + "-R-" + UUID.randomUUID();
 
@@ -731,7 +852,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     private Reservation findUserReservation(String userID, String reservationID) {
         List<Reservation> reservations = userReservations.get(userID);
 
-        if (reservations == null) {
+        if (reservations == null || reservationID == null) {
             return null;
         }
 
@@ -764,7 +885,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             if (reservation.getReservationID().equals(reservationID)) {
                 continue;
             }
-            String reservationCampus = reservation.getReservationID().substring(0, 3);
+            String reservationCampus = reservation.getItemID().substring(0, 3);
             if (reservationCampus.equals(targetCampus) && reservation.overlaps(start, end)) {
                 return false;
             }
@@ -774,31 +895,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
     private boolean isWithinWeeklyBudgetForUpdate(String userID, LocalDateTime start, LocalDateTime end,
             String reservationID) {
-        Map<LocalDateTime, Double> requestedHours = getHoursByWeek(start, end);
-        Map<LocalDateTime, Double> usedHours = new HashMap<>();
-
-        List<Reservation> reservations = userReservations.get(userID);
-
-        if (reservations != null) {
-            for (Reservation reservation : reservations) {
-                if (reservation.getReservationID().equals(reservationID)) {
-                    continue;
-                }
-                Map<LocalDateTime, Double> reservationHours = getHoursByWeek(reservation.getStartDateTime(),
-                        reservation.getEndDateTime());
-
-                for (LocalDateTime week : reservationHours.keySet()) {
-                    usedHours.put(week, usedHours.getOrDefault(week, 0.0) + reservationHours.get(week));
-                }
-            }
-        }
-        for (LocalDateTime week : requestedHours.keySet()) {
-            double total = usedHours.getOrDefault(week, 0.0) + requestedHours.get(week);
-            if (total > 20.0) {
-                return false;
-            }
-        }
-        return true;
+        return weeklyBudgetFailure(userID, start, end, reservationID) == null;
     }
 
     //concurrency timeout helper

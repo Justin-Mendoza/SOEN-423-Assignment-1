@@ -15,7 +15,8 @@ public class Client {
 
     //   date format for our client
     private static final DateTimeFormatter formatter =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+            DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm")
+                    .withResolverStyle(java.time.format.ResolverStyle.STRICT);
 
 
     private static CampusService connectToHomeCampus(String id) {
@@ -107,9 +108,7 @@ public class Client {
                 System.out.print("Item Name: ");
                 String itemName = scanner.nextLine();
 
-                System.out.print("Quantity: ");
-                int quantity =
-                        Integer.parseInt(scanner.nextLine());
+                int quantity = readQuantity();
 
                 String result = server.addItem(
                         managerID,
@@ -323,6 +322,21 @@ public class Client {
         System.out.println(result);
     }
 
+
+    private static int readQuantity() {
+        while (true) {
+            System.out.print("Quantity: ");
+            try {
+                int quantity = Integer.parseInt(scanner.nextLine().trim());
+                if (quantity > 0) {
+                    return quantity;
+                }
+            } catch (NumberFormatException e) {
+                // Keep the client running and let the manager correct the input.
+            }
+            System.out.println("Enter a positive whole number.");
+        }
+    }
 
     // date input
 

@@ -1,0 +1,41 @@
+2026-10-05T16:26:24.866017 | Server: SGW | Operation: addItem | Actor: SGWM1111 | Result: SUCCESS: Item added.
+2026-10-05T16:26:40.234490 | Server: SGW | Operation: listAvailableItems | Actor: SGWM1111 | Result: SGW1001 | Laptop | Macbook Pro | Available: 3
+
+2026-10-05T16:27:17.465206 | Server: SGW | Operation: addItem | Actor: SGWM1111 | Result: SUCCESS: Item updated.
+2026-10-05T16:27:18.941170 | Server: SGW | Operation: listAvailableItems | Actor: SGWM1111 | Result: SGW1001 | Laptop | Macbook Pro | Available: 5
+
+2026-10-05T16:27:34.282138 | Server: SGW | Operation: addItem | Actor: SGWM1111 | Result: SUCCESS: Item updated.
+2026-10-05T16:27:36.910950 | Server: SGW | Operation: listAvailableItems | Actor: SGWM1111 | Result: SGW1001 | Macbook | pro | Available: 7
+
+2026-10-05T16:28:48.140833 | Server: SGW | Operation: reserveItem | Actor: SGWU1111 | Result: Failure: Start cannot be in th epast
+2026-10-05T16:29:03.939606 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:29:03.965355 | Server: SGW | Operation: findItem | Actor: SGWU1111 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:30:47.445535 | Server: SGW | Operation: reserveItem | Actor: SGWU1111 | Result: Failure: exceeds weekly budget
+2026-10-05T16:31:58.478116 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:31:58.486863 | Server: SGW | Operation: findItem | Actor: SGWU1111 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:33:06.196852 | Server: SGW | Operation: reserveItem | Actor: SGWU1111 | Result: SUCCESS: Reservations saved under SGW-R-1791232386189
+2026-10-05T16:33:33.508594 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 6
+
+2026-10-05T16:33:33.519262 | Server: SGW | Operation: findItem | Actor: SGWU1111 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 6
+
+2026-10-05T16:34:05.147828 | Server: SGW | Operation: updateReservation | Actor: SGWU1111 | Result: FAILURE: Weekly budget exceeded.
+2026-10-05T16:35:37.257968 | Server: SGW | Operation: listAvailableItems | Actor: SGWM1111 | Result: SGW1001 | Macbook | pro | Available: 7
+
+2026-10-05T16:35:51.081359 | Server: SGW | Operation: cancelLocalReservation | Actor: SGWU1111 | Result: SUCCESS: SUCCESSFULLY REMOVED RESERVATION
+2026-10-05T16:35:51.082060 | Server: SGW | Operation: cancelReservation | Actor: SGWU1111 | Result: SUCCESS: SUCCESSFULLY REMOVED RESERVATION
+2026-10-05T16:36:10.919747 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:36:10.929161 | Server: SGW | Operation: findItem | Actor: SGWU1111 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:37:57.202223 | Server: SGW | Operation: addItem | Actor: SGWM1111 | Result: Failure: Item does not belong to mangers's campus.
+2026-10-05T16:37:59.025972 | Server: SGW | Operation: listAvailableItems | Actor: SGWM1111 | Result: SGW1001 | Macbook | pro | Available: 7
+
+2026-10-05T16:39:48.342501 | Server: SGW | Operation: findLocalItem | Actor: SYSTEM | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+
+2026-10-05T16:39:48.351122 | Server: SGW | Operation: findItem | Actor: SGWU1111 | Result: SGW1001 | Macbook | pro | Campus: SGW | Available: 7
+LOY5000 | Macbook | future | Campus: LOY | Available: 3
+

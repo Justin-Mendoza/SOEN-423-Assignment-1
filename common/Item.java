@@ -78,16 +78,7 @@ public class Item implements Serializable {
     public int getAvailableUnits(
             LocalDateTime start,
             LocalDateTime end) {
-        int overlappingReservations = 0;
-
-        for (int i = 0; i < reservations.size(); i++) {
-
-            if (reservations.get(i).overlaps(start, end)) {
-                overlappingReservations++;
-            }
-        }
-
-        return itemQuantity - overlappingReservations;
+        return getAvilableUnitsExcluding(null, start, end);
     }
 
     // Manager: quantity update
@@ -174,18 +165,24 @@ public class Item implements Serializable {
 
     // cehck available units except self
     public int getAvilableUnitsExcluding(String reservationID, LocalDateTime start, LocalDateTime end) {
-        int overlappingReservations = 0;
-
+        java.util.TreeMap<LocalDateTime, Integer> events = new java.util.TreeMap<>();
         for (Reservation reservation : reservations) {
-
-            if (reservationID.equals(reservation.getReservationID())) {
+            if (reservation.getReservationID().equals(reservationID) || !reservation.overlaps(start, end)) {
                 continue;
             }
-            if (reservation.overlaps(start, end)) {
-                overlappingReservations++;
-            }
+            LocalDateTime clippedStart = reservation.getStartDateTime().isBefore(start)
+                    ? start : reservation.getStartDateTime();
+            LocalDateTime clippedEnd = reservation.getEndDateTime().isAfter(end)
+                    ? end : reservation.getEndDateTime();
+            events.merge(clippedStart, 1, Integer::sum);
+            events.merge(clippedEnd, -1, Integer::sum);
         }
-
-        return itemQuantity - overlappingReservations;
+        int active = 0;
+        int peak = 0;
+        for (int change : events.values()) {
+            active += change;
+            peak = Math.max(peak, active);
+        }
+        return itemQuantity - peak;
     }
 }

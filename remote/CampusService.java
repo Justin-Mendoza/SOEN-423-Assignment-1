@@ -41,10 +41,9 @@ public interface CampusService extends Remote {
 
     String cancelLocalReservation(String userID, String reservationID, String itemID) throws RemoteException;
 
-    String approveWaitingRequest(String userID, String itemID, String reservationID, LocalDateTime startTime,
-            LocalDateTime endTime) throws RemoteException;
+    String processWaitingQueues() throws RemoteException;
 
-    String updateReservetion(String userID, String itemID, String reservationID, LocalDateTime startTime,
+    String approveWaitingRequest(String userID, String itemID, String reservationID, LocalDateTime startTime,
             LocalDateTime endTime) throws RemoteException;
 
     public String updateLocalReservation(String userID, String reservationID, String itemID,
