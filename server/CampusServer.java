@@ -4,6 +4,7 @@ import common.Item;
 import remote.CampusService;
 import common.Reservation;
 import common.WaitingRequest;
+import common.Logger;
 
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
@@ -37,6 +38,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     private Map<String, Item> items; // mapping itemID to item objecty
     private Map<String, List<Reservation>> userReservations; // userID -> Reservations
 
+    private String logResult(String operation, String actorID, String result) {
+        Logger.log(campus, operation, actorID, result);
+        return result;
+    }
+
     public CampusServer(String campus) throws RemoteException {
         this.campus = campus;
         this.items = new HashMap<>();
@@ -62,11 +68,11 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         Item item = items.get(itemID);
 
         if (item == null) {
-            return "FAILURE: Item not found.";
+            return logResult("joinLocalWaitingQueue", userID, "FAILURE: Item not found.");
         }
 
         if (item.getAvailableUnits(startDateTime, endDateTime) > 0) {
-            return "AVAILABLE: Item can currently be reserved.";
+            return logResult("joinLocalWaitingQueue", userID, "AVAILABLE: Item can currently be reserved.");
         }
 
         WaitingRequest request = new WaitingRequest(
@@ -77,7 +83,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
         item.addToWaitingQueue(request);
 
-        return "SUCCESS: Added to waiting queue.";
+        return logResult("joinLocalWaitingQueue", userID, "SUCCESS: Added to waiting queue.");
     }
 
     @Override
@@ -89,31 +95,31 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     ) throws RemoteException {
 
         if (!isValidUser(userID)) {
-            return "FAILURE: Invalid user ID.";
+            return logResult("joinWaitingQueue", userID, "FAILURE: Invalid user ID.");
         }
 
         if (!isCrossCampusReservationAllowed(
                 userID, itemID, startDateTime, endDateTime)) {
 
-            return "FAILURE: Cross-campus limit exceeded.";
+            return logResult("joinWaitingQueue", userID, "FAILURE: Cross-campus limit exceeded.");
         }
 
         if (!isWithinWeeklyBudget(
                 userID, startDateTime, endDateTime)) {
 
-            return "FAILURE: Weekly budget exceeded.";
+            return logResult("joinWaitingQueue", userID, "FAILURE: Weekly budget exceeded.");
         }
 
         String targetCampus = itemID.substring(0, 3);
 
         // Item belongs to this campus
         if (targetCampus.equals(campus)) {
-            return joinLocalWaitingQueue(
+            return logResult("joinWaitingQueue", userID, joinLocalWaitingQueue(
                     userID,
                     itemID,
                     startDateTime,
                     endDateTime
-            );
+            ));
         }
 
         // Item belongs to another campus
@@ -121,25 +127,25 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 = getCampusServer(targetCampus);
 
         if (targetServer == null) {
-            return "FAILURE: Target campus unavailable.";
+            return logResult("joinWaitingQueue", userID, "FAILURE: Target campus unavailable.");
         }
 
-        return targetServer.joinLocalWaitingQueue(
+        return logResult("joinWaitingQueue", userID, targetServer.joinLocalWaitingQueue(
                 userID,
                 itemID,
                 startDateTime,
                 endDateTime
-        );
+        ));
     }
 
     @Override
     public synchronized String findItem(String userID, String itemType, LocalDateTime startDateTime, LocalDateTime endDateTime)
             throws RemoteException {
         if (!isValidUser(userID)) {
-            return "FAILURE: Invalid User ID";
+            return logResult("findItem", userID, "FAILURE: Invalid User ID");
         }
         if (startDateTime == null || endDateTime == null || !startDateTime.isBefore(endDateTime)) {
-            return "FAILURE: Invalid time interval.";
+            return logResult("findItem", userID, "FAILURE: Invalid time interval.");
         }
 
         StringBuilder result = new StringBuilder();
@@ -153,9 +159,9 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             }
         }
         if (result.length() == 0) {
-            return "No matching items found";
+            return logResult("findItem", userID, "No matching items found");
         }
-        return result.toString();
+        return logResult("findItem", userID, result.toString());
 
     }
 
@@ -180,7 +186,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
             }
         }
-        return result.toString();
+        return logResult("findLocalItem", "SYSTEM", result.toString());
     }
 
     @Override
@@ -188,31 +194,31 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             LocalDateTime newEnd) throws RemoteException {
 
         if (!isValidUser(userID)) {
-            return "FAILURE: Invalid user ID.";
+            return logResult("updateReservation", userID, "FAILURE: Invalid user ID.");
         }
 
         if (newStart == null || newEnd == null) {
-            return "FAILURE: Invalid date/time.";
+            return logResult("updateReservation", userID, "FAILURE: Invalid date/time.");
         }
 
         if (!newStart.isBefore(newEnd)) {
-            return "FAILURE: Start time must be before end time.";
+            return logResult("updateReservation", userID, "FAILURE: Start time must be before end time.");
         }
 
         if (newStart.isBefore(now())) {
-            return "FAILURE: Start time cannot be in the past.";
+            return logResult("updateReservation", userID, "FAILURE: Start time cannot be in the past.");
         }
 
         Reservation reservation = findUserReservation(userID, reservationID);
 
         if (reservation == null) {
-            return "FAILURE: Reservation not found";
+            return logResult("updateReservation", userID, "FAILURE: Reservation not found");
         }
 
         String itemID = reservation.getItemID();
 
         if (!isCrossCampusReservationUpdateAllowed(userID, itemID, newStart, newEnd, reservationID)) {
-            return "FAILURE: CROSS CAMPUS LIMIT EXCEEDED";
+            return logResult("updateReservation", userID, "FAILURE: CROSS CAMPUS LIMIT EXCEEDED");
         }
 
         if (!isWithinWeeklyBudgetForUpdate(
@@ -221,7 +227,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 newEnd,
                 reservationID)) {
 
-            return "FAILURE: Weekly budget exceeded.";
+            return logResult("updateReservation", userID, "FAILURE: Weekly budget exceeded.");
         }
 
         String targetCampus = itemID.substring(0, 3);
@@ -239,7 +245,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             CampusService targetServer = getCampusServer(targetCampus);
 
             if (targetServer == null) {
-                return "FAILURE: Target campus unavailable.";
+                return logResult("updateReservation", userID, "FAILURE: Target campus unavailable.");
             }
 
             result = targetServer.updateLocalReservation(
@@ -257,7 +263,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                     newEnd);
         }
 
-        return result;
+        return logResult("updateReservation", userID, result);
     }
 
     @Override
@@ -269,17 +275,17 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         Item item = items.get(itemID);
 
         if (item == null) {
-            return "FAILURE: Item not found.";
+            return logResult("updateLocalReservation", userID, "FAILURE: Item not found.");
         }
 
         Reservation reservation = item.getReservation(reservationID);
 
         if (reservation == null) {
-            return "FAILURE: Reservation not found.";
+            return logResult("updateLocalReservation", userID, "FAILURE: Reservation not found.");
         }
 
         if (!reservation.getUserID().equals(userID)) {
-            return "FAILURE: Reservation does not belong to user.";
+            return logResult("updateLocalReservation", userID, "FAILURE: Reservation does not belong to user.");
         }
 
         if (item.getAvilableUnitsExcluding(
@@ -287,14 +293,14 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 newStartDateTime,
                 newEndDateTime) <= 0) {
 
-            return "FAILURE: Item unavailable for new interval.";
+            return logResult("updateLocalReservation", userID, "FAILURE: Item unavailable for new interval.");
         }
 
         reservation.updateTime(
                 newStartDateTime,
                 newEndDateTime);
 
-        return "SUCCESS: Reservation updated.";
+        return logResult("updateLocalReservation", userID, "SUCCESS: Reservation updated.");
     }
 
     // FIFO
@@ -350,28 +356,28 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             LocalDateTime start,
             LocalDateTime end) {
         if (!isCrossCampusReservationAllowed(userID, itemID, start, end)) {
-            return "FAILURE: CROSS CAMPUS LIMIT REACHED";
+            return logResult("approveWaitingRequest", userID, "FAILURE: CROSS CAMPUS LIMIT REACHED");
         }
         if (!isWithinWeeklyBudget(userID, start, end)) {
-            return "FAILURE: NOT WITHIN WEEKLY BUDGET";
+            return logResult("approveWaitingRequest", userID, "FAILURE: NOT WITHIN WEEKLY BUDGET");
         }
 
         Reservation reservation = new Reservation(reservationID, userID, itemID, start, end);
 
         userReservations.computeIfAbsent(userID, key -> new ArrayList<>()).add(reservation);
 
-        return "SUCCESS";
+        return logResult("approveWaitingRequest", userID, "SUCCESS");
     }
 
     @Override
     public synchronized String cancelReservation(String userID, String ReservationID) throws RemoteException {
         if (!isValidUser(userID)) {
-            return "FAILURE: User is not a valid user";
+            return logResult("cancelReservation", userID, "FAILURE: User is not a valid user");
         }
         Reservation reservation = findUserReservation((userID), ReservationID);
 
         if (reservation == null) {
-            return "FAILURE: reservation not found";
+            return logResult("cancelReservation", userID, "FAILURE: reservation not found");
         }
         String item = reservation.getItemID();
         String targetCampus = item.substring(0, 3);
@@ -384,7 +390,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             CampusService targetServer = getCampusServer(targetCampus);
 
             if (targetServer == null) {
-                return "FAILURE: Target Campus not found";
+                return logResult("cancelReservation", userID, "FAILURE: Target Campus not found");
             }
 
             result = targetServer.cancelLocalReservation(userID, ReservationID, item);
@@ -394,7 +400,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             userReservations.get(userID).remove(reservation);
         }
 
-        return result;
+        return logResult("cancelReservation", userID, result);
 
     }
 
@@ -403,22 +409,22 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             throws RemoteException {
         Item item = items.get(itemID);
         if (item == null) {
-            return "FAILURE: ITEM NOT FOUND";
+            return logResult("cancelLocalReservation", userID, "FAILURE: ITEM NOT FOUND");
         }
 
         Reservation reservation = item.getReservation(reservationID);
 
         if (reservation == null) {
-            return "FAILURE: RESERVATION NOT FOUND";
+            return logResult("cancelLocalReservation", userID, "FAILURE: RESERVATION NOT FOUND");
         }
 
         if (!reservation.getUserID().equals(userID)) {
-            return "FAILURE: USER IDS DO NOT MATCH";
+            return logResult("cancelLocalReservation", userID, "FAILURE: USER IDS DO NOT MATCH");
         }
 
         item.removeReservation(reservation);
         processWaitingQueue(item);
-        return "SUCCESS: SUCCESSFULLY REMOVED RESERVATION";
+        return logResult("cancelLocalReservation", userID, "SUCCESS: SUCCESSFULLY REMOVED RESERVATION");
 
     }
 
@@ -427,25 +433,25 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             LocalDateTime end) throws RemoteException {
         // Validation
         if (!isValidUser(userId)) {
-            return "Failure: Not a valid user";
+            return logResult("reserveItem", userId, "Failure: Not a valid user");
         }
         if (start == null || end == null) {
-            return "Failure: Invalid Date Time";
+            return logResult("reserveItem", userId, "Failure: Invalid Date Time");
         }
         if (!start.isBefore(end)) {
-            return "Failure: Start is before end";
+            return logResult("reserveItem", userId, "Failure: Start is before end");
         }
 
         if (start.isBefore(now())) {
-            return "Failure: Start cannot be in th epast";
+            return logResult("reserveItem", userId, "Failure: Start cannot be in th epast");
         }
         // if does pass cross campus limit
         if (!isCrossCampusReservationAllowed(userId, itemID, start, end)) {
-            return "Failure: Cross campus limit is exceeded";
+            return logResult("reserveItem", userId, "Failure: Cross campus limit is exceeded");
         }
 
         if (!isWithinWeeklyBudget(userId, start, end)) {
-            return "Failure: exceeds weekly budget";
+            return logResult("reserveItem", userId, "Failure: exceeds weekly budget");
         }
 
         // CROSS CAMPUS reservation
@@ -454,7 +460,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             CampusService targetServer = getCampusServer(targetCampus);
 
             if (targetServer == null) {
-                return "Failure: Target server not found";
+                return logResult("reserveItem", userId, "Failure: Target server not found");
             }
 
             String result = targetServer.reserveLocalItem(userId, itemID, start, end);
@@ -465,16 +471,16 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                 userReservations.computeIfAbsent(userId, key -> new ArrayList<>()).add(reservation);
             }
 
-            return result;
+            return logResult("reserveItem", userId, result);
 
         }
         Item item = items.get(itemID);
 
         if (item == null) {
-            return "Fail: Item not Found";
+            return logResult("reserveItem", userId, "Fail: Item not Found");
         }
         if (item.getAvailableUnits(start, end) <= 0) {
-            return "Failure: Item has insufficient units";
+            return logResult("reserveItem", userId, "Failure: Item has insufficient units");
         }
 
         // passes all our checks ,we can reserve it
@@ -487,7 +493,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         // add reservaiton to the user
         userReservations.computeIfAbsent(userId, key -> new ArrayList<>()).add(reservation);
 
-        return "SUCCESS: Reservations saved under " + reservationID;
+        return logResult("reserveItem", userId, "SUCCESS: Reservations saved under " + reservationID);
     }
 
     // ADDITEM BUT ALSO UDPATE FOR GIVEN SERVER
@@ -500,15 +506,15 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             int itemQuantity) throws RemoteException {
         // check manager
         if (!isValidManager(managerID)) {
-            return "Failure: Invalid manager ID.";
+            return logResult("addItem", managerID, "Failure: Invalid manager ID.");
         }
         // check iterm in campus
         if (!itemID.startsWith(campus)) {
-            return "Failure: Item does not belong to mangers's campus.";
+            return logResult("addItem", managerID, "Failure: Item does not belong to mangers's campus.");
         }
         // check Positive Quantity
         if (itemQuantity <= 0) {
-            return "FAILURE: QUANTITY MUST BE GREATER THAN 0.";
+            return logResult("addItem", managerID, "FAILURE: QUANTITY MUST BE GREATER THAN 0.");
         }
         Item item = items.get(itemID);
 
@@ -516,18 +522,18 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
         if (item == null) {
             item = new Item(itemID, itemType, itemName, itemQuantity);
             items.put(itemID, item);
-            return "SUCCESS: Item added.";
+            return logResult("addItem", managerID, "SUCCESS: Item added.");
         }
 
         if (!item.canSetQuantity(itemQuantity)) {
-            return "Failure: Quantity is too small for existing resrvations.";
+            return logResult("addItem", managerID, "Failure: Quantity is too small for existing resrvations.");
         }
 
         item.setItemType(itemType);
         item.setItemName(itemName);
         item.setItemQuantity(itemQuantity);
 
-        return "SUCCESS: Item updated.";
+        return logResult("addItem", managerID, "SUCCESS: Item updated.");
 
     }
 
@@ -536,34 +542,34 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
             String managerID,
             String itemID) throws RemoteException {
         if (!isValidManager(managerID)) {
-            return "FAILURE: Invalid managerID.";
+            return logResult("removeItem", managerID, "FAILURE: Invalid managerID.");
         }
 
         if (!itemID.startsWith(campus)) {
-            return "FAILURE: Item does not belong to manager's campus";
+            return logResult("removeItem", managerID, "FAILURE: Item does not belong to manager's campus");
         }
 
         Item item = items.get(itemID);
 
         if (item == null) {
-            return "FAILURE: Item not found.";
+            return logResult("removeItem", managerID, "FAILURE: Item not found.");
         }
         if (item.hasCurrentOrFutureReservations()) {
-            return "FAILURE: Item has current/ future reservations.";
+            return logResult("removeItem", managerID, "FAILURE: Item has current/ future reservations.");
         }
         items.remove(itemID);
 
-        return "SUCCESS: Item removed.";
+        return logResult("removeItem", managerID, "SUCCESS: Item removed.");
 
     }
 
     @Override
     public synchronized String listAvailableItems(String managerID) throws RemoteException {
         if (!isValidManager(managerID)) {
-            return "FAILURE Invalid Manager ID.";
+            return logResult("listAvailableItems", managerID, "FAILURE Invalid Manager ID.");
         }
         if (items.isEmpty()) {
-            return "No items available.";
+            return logResult("listAvailableItems", managerID, "No items available.");
         }
         StringBuilder result = new StringBuilder();
 
@@ -577,7 +583,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
                     .append(item.getCurrentAvailableUnits())
                     .append("\n");
         }
-        return result.toString();
+        return logResult("listAvailableItems", managerID, result.toString());
     }
 
     private boolean isValidUser(String userID) {
@@ -702,16 +708,16 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
     public synchronized String reserveLocalItem(String userID, String itemID, LocalDateTime start, LocalDateTime end)
             throws RemoteException {
         if (!itemID.startsWith(campus)) {
-            return "Failure: item does not belong to campus";
+            return logResult("reserveLocalItem", userID, "Failure: item does not belong to campus");
         }
         Item item = items.get(itemID);
 
         if (item == null) {
-            return "Failure: Item does Not Exist";
+            return logResult("reserveLocalItem", userID, "Failure: Item does Not Exist");
         }
 
         if (item.getAvailableUnits(start, end) <= 0) {
-            return "Failrue: Not enough items, cannot reserve";
+            return logResult("reserveLocalItem", userID, "Failrue: Not enough items, cannot reserve");
         }
         String reservationID = campus + "-R-" + UUID.randomUUID();
 
@@ -719,7 +725,7 @@ public class CampusServer extends UnicastRemoteObject implements CampusService {
 
         item.addReservation(reservation);
 
-        return "SUCCESS: " + reservationID;
+        return logResult("reserveLocalItem", userID, "SUCCESS: " + reservationID);
     }
 
     private Reservation findUserReservation(String userID, String reservationID) {
